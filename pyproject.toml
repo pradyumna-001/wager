@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pm-agent"
+version = "0.1.0"
+description = "PM decision-tracking agent: extract decisions, track bets, grade calibration."
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph",
+    "langgraph-checkpoint-postgres",
+    "psycopg[binary]",
+    "pydantic>=2",
+    "pydantic-settings",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "slack-sdk",
+    "google-api-python-client",
+    "google-auth",
+    "openai",
+    "typer",
+    "python-dateutil",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+    "testcontainers",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
