@@ -4,16 +4,21 @@ Google API mocked at the client boundary (monkeypatched in the gdocs module
 namespace); no network, no SA file reads.
 """
 
+import hashlib
+import hmac
+import time
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
+from slack_sdk.errors import SlackApiError
 
 import pm_agent.integrations.gcal as gcal_mod
 import pm_agent.integrations.gdocs as gdocs
 import pm_agent.integrations.github as github_mod
+import pm_agent.integrations.slack as slack_mod
 from pm_agent.config import get_settings
 from pm_agent.integrations.base import FetchResult
 from pm_agent.models import Severity, Source
@@ -326,3 +331,123 @@ def test_gcal_create_event_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.error.source == Source.GCAL
     assert result.error.severity == Severity.CRITICAL
     assert result.error.message.startswith("calendar_write_failed")
+
+
+# --- slack.py ---
+
+
+class _FakeWebClient:
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+        self.calls: list[dict[str, Any]] = []
+
+    def chat_postMessage(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self._error is not None:
+            raise self._error
+        return SimpleNamespace(ok=True)
+
+
+def _fake_slack(monkeypatch: pytest.MonkeyPatch, error: Exception | None = None) -> _FakeWebClient:
+    fake = _FakeWebClient(error)
+    monkeypatch.setattr(slack_mod, "WebClient", lambda token: fake)
+    return fake
+
+
+def test_slack_post_confirm_block_kit(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _fake_slack(monkeypatch)
+    settings = get_settings()
+
+    result = slack_mod.post_confirm(
+        settings, "bet-1", ["Ship both", "Ship search only"], 1, "Search drives activation"
+    )
+
+    assert result.value is None
+    assert result.error is None
+    assert len(fake.calls) == 1
+    call = fake.calls[0]
+    assert call["channel"] == settings.slack_channel_id
+    section = call["blocks"][0]
+    assert section["type"] == "section"
+    assert "📝 *Bet confirmation needed*" in section["text"]["text"]
+    assert "*Hypothesis:* Search drives activation" in section["text"]["text"]
+    assert "*I believe you chose:* B — Ship search only" in section["text"]["text"]
+    actions = call["blocks"][1]
+    assert actions["type"] == "actions"
+    assert actions["block_id"] == "bet_confirm:bet-1"
+    first, second = actions["elements"]
+    assert first["action_id"] == "confirm_option:0"
+    assert first["text"] == {"type": "plain_text", "text": "Choose A — Ship both"}
+    assert first["value"] == "bet-1"
+    assert "style" not in first
+    assert second["action_id"] == "confirm_option:1"
+    assert second["text"]["text"].startswith("✅")
+    assert second["value"] == "bet-1"
+    assert second["style"] == "primary"
+
+
+def test_slack_post_confirm_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_slack(monkeypatch, error=SlackApiError("chat.postMessage failed", None))
+
+    result = slack_mod.post_confirm(get_settings(), "bet-1", ["A"], 0, "h")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.source == Source.SLACK
+    assert result.error.severity == Severity.CRITICAL
+    assert result.error.message.startswith("slack_post_failed")
+
+
+def test_slack_post_report_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _fake_slack(monkeypatch)
+    settings = get_settings()
+
+    result = slack_mod.post_report(settings, "Weekly calibration report")
+
+    assert result.value is None
+    assert result.error is None
+    assert fake.calls == [
+        {"channel": settings.slack_channel_id, "text": "Weekly calibration report"}
+    ]
+
+
+def test_slack_post_report_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_slack(monkeypatch, error=SlackApiError("chat.postMessage failed", None))
+
+    result = slack_mod.post_report(get_settings(), "report")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.source == Source.SLACK
+    assert result.error.message.startswith("slack_post_failed")
+
+
+def _expected_signature(secret: str, body: bytes, timestamp: str) -> str:
+    base = b"v0:" + timestamp.encode("utf-8") + b":" + body
+    digest = hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
+    return f"v0={digest}"
+
+
+def test_slack_signature_valid() -> None:
+    settings = get_settings()
+    body = b"payload=1&x=2"
+    ts = str(int(time.time()))
+    signature = _expected_signature(settings.slack_signing_secret, body, ts)
+
+    assert slack_mod.verify_slack_signature(settings, body, ts, signature) is True
+
+
+def test_slack_signature_invalid() -> None:
+    settings = get_settings()
+    ts = str(int(time.time()))
+
+    assert slack_mod.verify_slack_signature(settings, b"payload", ts, "v0=deadbeef") is False
+
+
+def test_slack_signature_stale() -> None:
+    settings = get_settings()
+    body = b"payload"
+    old_ts = str(int(time.time()) - 400)
+    signature = _expected_signature(settings.slack_signing_secret, body, old_ts)
+
+    assert slack_mod.verify_slack_signature(settings, body, old_ts, signature) is False
