@@ -17,6 +17,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from langgraph.errors import GraphBubbleUp
+
 from pm_agent.errors import IntegrationError, PipelineError
 
 logger = logging.getLogger("pm_agent.node")
@@ -48,15 +50,23 @@ def add_node_checked(graph: Any, name: str, fn: NodeFn) -> None:
     - Translates unexpected exceptions into ``PipelineError(phase=name, cause=...)``.
       ``PipelineError``/``IntegrationError`` pass through unchanged.
     """
-    ctx = contextvars.copy_context()
 
     def wrapped(state: dict[str, Any]) -> dict[str, Any]:
+        # Copy at CALL time: the registration-time context lacks the runnable
+        # config contextvars LangGraph sets (interrupt()/get_config() need them).
+        ctx = contextvars.copy_context()
         start = time.perf_counter()
         try:
             result = ctx.run(fn, state)
         except (PipelineError, IntegrationError):
             elapsed = (time.perf_counter() - start) * 1000
             _structured_log(name, elapsed, "error")
+            raise
+        except GraphBubbleUp:
+            # LangGraph control-flow exceptions (GraphInterrupt) must pass
+            # through unchanged — they ARE the pause mechanism.
+            elapsed = (time.perf_counter() - start) * 1000
+            _structured_log(name, elapsed, "interrupt")
             raise
         except Exception as exc:
             elapsed = (time.perf_counter() - start) * 1000
