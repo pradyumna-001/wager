@@ -18,6 +18,7 @@ from slack_sdk.errors import SlackApiError
 import pm_agent.integrations.gcal as gcal_mod
 import pm_agent.integrations.gdocs as gdocs
 import pm_agent.integrations.github as github_mod
+import pm_agent.integrations.posthog as posthog_mod
 import pm_agent.integrations.slack as slack_mod
 from pm_agent.config import get_settings
 from pm_agent.integrations.base import FetchResult
@@ -451,3 +452,133 @@ def test_slack_signature_stale() -> None:
     signature = _expected_signature(settings.slack_signing_secret, body, old_ts)
 
     assert slack_mod.verify_slack_signature(settings, body, old_ts, signature) is False
+
+
+# --- posthog.py ---
+
+
+def _fake_posthog_httpx(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[[str, str, Any], _FakeResponse]
+) -> _FakeClient:
+    """Replace posthog.httpx with a stub namespace returning a shared fake client."""
+    client = _FakeClient(handler)
+    monkeypatch.setattr(
+        posthog_mod,
+        "httpx",
+        SimpleNamespace(
+            Client=lambda *a, **k: client,
+            Timeout=httpx.Timeout,
+            TimeoutException=httpx.TimeoutException,
+        ),
+    )
+    return client
+
+
+def test_posthog_run_hogql_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        return _FakeResponse(200, {"results": [["15.0"]]})
+
+    client = _fake_posthog_httpx(monkeypatch, handler)
+    settings = get_settings()
+
+    result = posthog_mod.run_hogql(settings, "SELECT lift FROM events")
+
+    assert result.value == 15.0
+    assert result.error is None
+    method, url, kwargs = client.calls[0]
+    assert method == "POST"
+    assert url == f"{settings.posthog_host}/api/projects/{settings.posthog_project_id}/query"
+    assert kwargs["headers"]["Authorization"] == f"Bearer {settings.posthog_personal_api_key}"
+    assert kwargs["json"] == {"query": {"kind": "HogQLQuery", "query": "SELECT lift FROM events"}}
+
+
+def test_posthog_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        raise httpx.ReadTimeout("timed out")
+
+    _fake_posthog_httpx(monkeypatch, handler)
+
+    result = posthog_mod.run_hogql(get_settings(), "SELECT 1")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.source == Source.POSTHOG
+    assert result.error.severity == Severity.WARNING
+    assert result.error.message == "posthog_timeout"
+
+
+def test_posthog_non_2xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        return _FakeResponse(403, {"message": "forbidden"})
+
+    _fake_posthog_httpx(monkeypatch, handler)
+
+    result = posthog_mod.run_hogql(get_settings(), "SELECT 1")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.message == "posthog_error: 403"
+
+
+def test_posthog_empty_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        return _FakeResponse(200, {"results": []})
+
+    _fake_posthog_httpx(monkeypatch, handler)
+
+    result = posthog_mod.run_hogql(get_settings(), "SELECT 1")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.message == "posthog_empty_result"
+
+
+def test_posthog_malformed_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        return _FakeResponse(200, {"results": [["not-a-number"]]})
+
+    _fake_posthog_httpx(monkeypatch, handler)
+
+    result = posthog_mod.run_hogql(get_settings(), "SELECT 1")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.message == "posthog_empty_result"
+
+
+def test_posthog_capture_event_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        return _FakeResponse(200, {})
+
+    client = _fake_posthog_httpx(monkeypatch, handler)
+    settings = get_settings()
+
+    result = posthog_mod.capture_event(
+        settings,
+        "meeting:2026-09-13:pm",
+        "bet_confirmed",
+        {"bet": "bet-1"},
+        "2026-09-13T10:00:00Z",
+    )
+
+    assert result.value is None
+    assert result.error is None
+    method, url, kwargs = client.calls[0]
+    assert url == f"{settings.posthog_host}/capture/"
+    assert kwargs["json"]["distinct_id"] == "meeting:2026-09-13:pm"
+    assert kwargs["json"]["event"] == "bet_confirmed"
+    assert kwargs["json"]["properties"] == {"bet": "bet-1"}
+    assert kwargs["json"]["timestamp"] == "2026-09-13T10:00:00Z"
+
+
+def test_posthog_capture_event_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(method: str, url: str, payload: Any) -> _FakeResponse:
+        return _FakeResponse(500, {"message": "boom"})
+
+    _fake_posthog_httpx(monkeypatch, handler)
+
+    result = posthog_mod.capture_event(get_settings(), "id", "e", {}, "2026-09-13T10:00:00Z")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.message == "posthog_error: 500"
