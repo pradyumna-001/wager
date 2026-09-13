@@ -64,14 +64,29 @@ def _events_payload() -> list[dict]:
 
 
 def _push_events(events: list[dict]) -> None:
+    import os
+    from pathlib import Path
+
     settings = get_settings()
+    api_key = os.environ.get("POSTHOG_PROJECT_API_KEY", "")
+    if not api_key:
+        env_file = Path(".env")
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("POSTHOG_PROJECT_API_KEY="):
+                    api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    if not api_key:
+        print("[posthog] error: POSTHOG_PROJECT_API_KEY missing from .env (project key phc_...)")
+        raise SystemExit(1)
     url = f"{settings.posthog_host}/capture/"
-    headers = {"Authorization": f"Bearer {settings.posthog_personal_api_key}"}
     with httpx.Client(timeout=60) as client:
         for start in range(0, len(events), 200):
             chunk = events[start : start + 200]
-            response = client.post(url, headers=headers, json=chunk)
-            response.raise_for_status()
+            response = client.post(url, json={"api_key": api_key, "batch": chunk})
+            if response.status_code >= 400:
+                print(f"[posthog] error: capture returned {response.status_code}: {response.text[:200]}")
+                raise SystemExit(1)
     print(f"[posthog] pushed {len(events)} events in batches of 200")
 
 
