@@ -22,16 +22,20 @@ S2_SHIP = TODAY - timedelta(days=21)
 S3_SHIP = TODAY - timedelta(days=21)
 
 
-def _lift_query(count_event: str, denom_event: str) -> str:
-    """HogQL returning the pre/post lift in percentage points (2 decimals)."""
+def _lift_query(count_event: str, denom_event: str, key: str) -> str:
+    """HogQL returning the pre/post lift in percentage points (2 decimals).
+
+    Filtered to the bet's own synthetic events (``seed-{key}-%``) so bets that
+    share an event name do not pollute each other's denominators.
+    """
     return (
         "SELECT round(100 * ("
         "(countIf(event = '{c}' AND timestamp >= '{ship}')"
         " / countIf(event = '{d}' AND timestamp >= '{ship}'))"
         " - (countIf(event = '{c}' AND timestamp < '{ship}')"
         " / countIf(event = '{d}' AND timestamp < '{ship}'))"
-        "), 2) AS lift_pp FROM events"
-    ).format(c=count_event, d=denom_event, ship="{ship}")
+        "), 2) AS lift_pp FROM events WHERE distinct_id LIKE 'seed-{key}-%'"
+    ).format(c=count_event, d=denom_event, key=key, ship="{ship}")
 
 
 SEEDS: list[dict] = [
@@ -40,7 +44,7 @@ SEEDS: list[dict] = [
         "hypothesis": "Guest checkout lifts conversion +10pp in 1 week",
         "predicted_lift": 10.0,
         "metric_name": "checkout_conversion",
-        "metric_query": _lift_query("checkout_completed", "checkout_started").format(
+        "metric_query": _lift_query("checkout_completed", "checkout_started", "S1").format(
             ship=S1_SHIP.isoformat()
         ),
         "meeting_date": S1_SHIP - timedelta(days=7),
@@ -62,7 +66,7 @@ SEEDS: list[dict] = [
         "hypothesis": "Onboarding tooltip tour lifts activation +8pp in 2 weeks",
         "predicted_lift": 8.0,
         "metric_name": "signup_activation",
-        "metric_query": _lift_query("signup_activated", "signup_started").format(
+        "metric_query": _lift_query("signup_activated", "signup_started", "S2").format(
             ship=S2_SHIP.isoformat()
         ),
         "meeting_date": S2_SHIP - timedelta(days=7),
@@ -84,7 +88,7 @@ SEEDS: list[dict] = [
         "hypothesis": "Dark mode lifts 7-day retention +5pp in 2 weeks",
         "predicted_lift": 5.0,
         "metric_name": "retention_7d",
-        "metric_query": _lift_query("retained_7d", "signup_started").format(
+        "metric_query": _lift_query("retained_7d", "signup_started", "S3").format(
             ship=S3_SHIP.isoformat()
         ),
         "meeting_date": S3_SHIP - timedelta(days=7),
@@ -108,7 +112,7 @@ D1 = {
     "hypothesis": "Inline upgrade prompt lifts trial-to-paid +6pp in 2 weeks",
     "predicted_lift": 6.0,
     "metric_name": "trial_to_paid",
-    "metric_query": _lift_query("upgraded", "trial_started").format(
+    "metric_query": _lift_query("upgraded", "trial_started", "D1").format(
         ship=(TODAY - timedelta(days=1)).isoformat()
     ),
     "meeting_date": TODAY - timedelta(days=2),
