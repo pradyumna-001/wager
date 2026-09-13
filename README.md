@@ -31,6 +31,31 @@ back to what was said in the room.
 
 ## Architecture
 
+```text
+                 ┌────────────────────────────────────┐
+                 │            FastAPI app             │
+                 │  POST /phase1/run     POST /slack/interactions
+                 │  POST /reviews/check  GET  /bets/{id} /calibration
+                 └──────────┬───────────┬─────────────┘
+                            │           │ resume via Command
+                  ┌─────────▼────────┐  │
+                  │ Phase 1 LangGraph│◄─┘  interrupt at confirm_decision ⚑
+                  │ docs_intake → extract_facts → derive_reasoning →
+                  │ confirm_decision ⚑ → write_decision → link_github →
+                  │ schedule_review
+                  └─────────┬────────┘
+                            ▼
+                  ┌──────────────────┐          ┌────────────────────┐
+                  │    PostgreSQL    │◄─────────┤ Phase 2 LangGraph  │
+                  │ graph_nodes      │  source  │ fetch_metric →     │
+                  │ graph_edges      │  of truth│ compare_outcome →  │
+                  │ bets / outcomes  │          │ update_calibration │
+                  └──────────────────┘          │ → report_outcome   │
+                                                └────────────────────┘
+   integrations (gdocs, slack, github, gcal, posthog) behind
+   src/pm_agent/integrations/*.py — the ONLY modules that touch external APIs
+```
+
 - **LangGraph** pipeline with a human-in-the-loop interrupt (Slack button →
   graph resume), persisted via a Postgres checkpointer (`thread_id = bet_id`)
 - **PostgreSQL is the single source of truth.** GitHub, Calendar, Slack are
@@ -63,6 +88,22 @@ python -m pm_agent.cli show-bet <bet_id>           # inspect the reasoning graph
 python -m pm_agent.cli calibration                 # PM's running calibration score
 ```
 
+## Demo
+
+One command resets the whole demo: DB check + migrate + seed the three
+backdated bets (S1–S3, graded against deterministic PostHog data) + the
+failure-demo bet D1, then verifies the seeded PostHog lifts.
+
+```bash
+scripts/dev/demo_reset.sh     # (or demo_reset.ps1 on Windows)
+```
+
+Expected seeded grades: S1 ✅ supports (delta +2), S2 ❌ contradicts (delta −7),
+S3 ✅ supports — boundary case (delta +4.9, just inside the ±5pp tolerance).
+Then run the demo per `docs/08_DEMO_SCRIPT.md`.
+
+**Demo video:** _[link placeholder]_
+
 ## Human-in-the-loop by design
 
 The DECISION node — the accountability record — is written **only** after the
@@ -75,3 +116,15 @@ tool whose bookkeeping is itself probabilistic would be self-defeating.
 Postgres-first writes, typed failure flags rendered verbatim in reports,
 idempotent review checks, resumable LangGraph checkpoints. See the project
 documentation for the full reliability brief and architecture decision records.
+
+## Limitations
+
+Stated honestly:
+
+- Side-effect delivery to external SaaS APIs (GitHub/Calendar/Slack/PostHog) is
+  **at-most-once with visible failure** — not exactly-once. Postgres writes are
+  transactional; side effects are idempotent or skip-tolerant, and every failure
+  is recorded as a `DataFlag` the user can see.
+- Single PM / single Slack channel.
+- HogQL correctness depends on the LLM-written query; it is validated
+  end-to-end by fixtures, not formally.
