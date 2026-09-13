@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
+import pm_agent.integrations.gcal as gcal_mod
 import pm_agent.integrations.gdocs as gdocs
 import pm_agent.integrations.github as github_mod
 from pm_agent.config import get_settings
@@ -253,3 +254,75 @@ def test_github_transport_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.error is not None
     assert result.error.source == Source.GITHUB
     assert result.error.message.startswith("github_error:")
+
+
+# --- gcal.py ---
+
+
+def _fake_gcal(
+    monkeypatch: pytest.MonkeyPatch,
+    event_result: dict[str, Any] | None = None,
+    execute_error: Exception | None = None,
+) -> dict[str, Any]:
+    """Install fake Credentials + discovery.build for gcal; return recorded calls."""
+    recorded: dict[str, Any] = {}
+
+    class FakeCredentials:
+        @classmethod
+        def from_service_account_file(cls, path: str) -> object:
+            return object()
+
+    class FakeInsertRequest:
+        def execute(self) -> dict[str, Any]:
+            if execute_error is not None:
+                raise execute_error
+            assert event_result is not None
+            return event_result
+
+    class FakeEvents:
+        def insert(self, *, calendarId: str, body: dict[str, Any]) -> FakeInsertRequest:
+            recorded["calendarId"] = calendarId
+            recorded["body"] = body
+            return FakeInsertRequest()
+
+    class FakeService:
+        def events(self) -> FakeEvents:
+            return FakeEvents()
+
+    def fake_build(service_name: str, version: str, **kwargs: Any) -> FakeService:
+        recorded["build"] = (service_name, version, kwargs)
+        return FakeService()
+
+    monkeypatch.setattr(gcal_mod, "Credentials", FakeCredentials)
+    monkeypatch.setattr(gcal_mod, "build", fake_build)
+    return recorded
+
+
+def test_gcal_create_event_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _fake_gcal(monkeypatch, event_result={"id": "evt-123"})
+    settings = get_settings()
+
+    result = gcal_mod.create_review_event(
+        settings, "2026-09-20", "Review bet: activation", "HogQL: SELECT ... bet_id:bet-1"
+    )
+
+    assert result.value == "evt-123"
+    assert result.error is None
+    assert calls["build"][:2] == ("calendar", "v3")
+    assert calls["calendarId"] == settings.google_calendar_id
+    assert calls["body"]["summary"] == "Review bet: activation"
+    assert calls["body"]["description"] == "HogQL: SELECT ... bet_id:bet-1"
+    assert calls["body"]["start"] == {"date": "2026-09-20"}
+    assert calls["body"]["end"] == {"date": "2026-09-21"}
+
+
+def test_gcal_create_event_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_gcal(monkeypatch, execute_error=RuntimeError("calendar down"))
+
+    result = gcal_mod.create_review_event(get_settings(), "2026-09-20", "t", "d")
+
+    assert result.value is None
+    assert result.error is not None
+    assert result.error.source == Source.GCAL
+    assert result.error.severity == Severity.CRITICAL
+    assert result.error.message.startswith("calendar_write_failed")
