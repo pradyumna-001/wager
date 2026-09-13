@@ -44,11 +44,14 @@ def build_report_text(bet, outcome, calibration, flags: list[DataFlag]) -> str:
             f"  Actual:    {outcome.actual_lift:+}pp → delta {outcome.delta:+}pp"
             f" → {verdict} (tolerance ±{outcome.tolerance}pp)"
         )
-    lines.append(
-        f"  PM calibration: mean |delta| = {calibration.mean_abs_delta:.1f}pp"
-        f" across {calibration.n_resolved} resolved bets,"
-        f" {round(calibration.hit_rate * 100)}% within tolerance"
-    )
+    if calibration.mean_abs_delta is None or not calibration.n_resolved:
+        lines.append("  PM calibration: no resolved bets yet")
+    else:
+        lines.append(
+            f"  PM calibration: mean |delta| = {calibration.mean_abs_delta:.1f}pp"
+            f" across {calibration.n_resolved} resolved bets,"
+            f" {round(calibration.hit_rate * 100)}% within tolerance"
+        )
     if outcome.supports:
         lines.append(f"  Key assumption held: {outcome.assumption_content}")
     else:
