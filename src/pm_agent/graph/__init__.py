@@ -1,5 +1,6 @@
 """Graph domain core: Postgres-backed store (+ calibration, issue M1.3)."""
 
+from pm_agent.graph.calibration import Calibration, compute_calibration
 from pm_agent.graph.store import (
     Bet,
     append_flag,
@@ -16,6 +17,7 @@ from pm_agent.graph.store import (
 
 __all__ = [
     "Bet",
+    "Calibration",
     "append_flag",
     "create_bet",
     "due_bets",
@@ -26,4 +28,5 @@ __all__ = [
     "update_bet_status",
     "write_decision",
     "write_outcome",
+    "compute_calibration",
 ]
