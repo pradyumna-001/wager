@@ -20,6 +20,7 @@ TODAY = date.today()
 S1_SHIP = TODAY - timedelta(days=21)
 S2_SHIP = TODAY - timedelta(days=21)
 S3_SHIP = TODAY - timedelta(days=21)
+D1_SHIP = TODAY - timedelta(days=1)
 
 
 def _lift_query(count_event: str, denom_event: str, key: str) -> str:
@@ -113,7 +114,7 @@ D1 = {
     "predicted_lift": 6.0,
     "metric_name": "trial_to_paid",
     "metric_query": _lift_query("upgraded", "trial_started", "D1").format(
-        ship=(TODAY - timedelta(days=1)).isoformat()
+        ship=D1_SHIP.isoformat()
     ),
     "meeting_date": TODAY - timedelta(days=2),
     "review_date": TODAY + timedelta(days=1),

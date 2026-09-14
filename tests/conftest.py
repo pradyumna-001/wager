@@ -23,6 +23,7 @@ _PLACEHOLDERS = {
     "POSTHOG_HOST": "http://localhost:9999",
     "POSTHOG_PROJECT_ID": "0",
     "POSTHOG_PERSONAL_API_KEY": "phx_test",
+    "DEMO_MODE": "false",
 }
 
 for _key, _value in _PLACEHOLDERS.items():
