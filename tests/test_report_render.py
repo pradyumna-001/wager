@@ -87,6 +87,25 @@ def test_build_report_text_timeout() -> None:
     assert text == TIMEOUT_GOLDEN
 
 
+def test_build_report_text_non_timeout_failure() -> None:
+    """Any fetch failure (e.g. HTTP 400) renders the failure line — never crashes."""
+    outcome = SimpleNamespace(
+        actual_lift=None,
+        delta=None,
+        supports=None,
+        tolerance=5.0,
+        assumption_content="Users want faster onboarding",
+    )
+    flags = [DataFlag(Source.POSTHOG, Severity.WARNING, "posthog_error: 400")]
+
+    text = build_report_text(_bet(), outcome, _calibration(), flags)
+
+    assert "Could not fetch metric from PostHog. Will retry on next review check." in text
+    assert "(timeout)" not in text
+    assert "⚠️ posthog: posthog_error: 400" in text
+    assert "Actual:" not in text
+
+
 def test_flag_lines() -> None:
     flags = [
         DataFlag(Source.GDOCS, Severity.CRITICAL, "gdocs_fetch_failed: 500"),

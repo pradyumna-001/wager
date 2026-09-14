@@ -28,14 +28,19 @@ def build_report_text(bet, outcome, calibration, flags: list[DataFlag]) -> str:
     - ``calibration``: ``.mean_abs_delta: float | None``, ``.n_resolved: int``,
       ``.hit_rate: float`` (fraction per docs/06)
 
-    A ``posthog_timeout`` flag replaces the Predicted/Actual result lines with
-    the failure line (the report is still sent). If ``flags`` is non-empty,
-    each flag renders as a ``⚠️ {source}: {message}`` line appended at the end.
+    A fetch failure (``actual_lift`` is None — timeout, HTTP error, empty
+    result) replaces the Predicted/Actual result lines with the failure line
+    (the report is still sent); a ``posthog_timeout`` flag adds "(timeout)".
+    If ``flags`` is non-empty, each flag renders as a ``⚠️ {source}: {message}``
+    line appended at the end.
     """
     lines: list[str] = [f'📊 Bet resolved: "{bet.hypothesis}"']
-    if any(f.message == _TIMEOUT_MESSAGE for f in flags):
+    if outcome.actual_lift is None:
+        timed_out = any(f.message == _TIMEOUT_MESSAGE for f in flags)
         lines.append(
-            "  Could not fetch metric from PostHog (timeout). Will retry on next review check."
+            "  Could not fetch metric from PostHog"
+            + (" (timeout)" if timed_out else "")
+            + ". Will retry on next review check."
         )
     else:
         verdict = "✅ supports" if outcome.supports else "❌ contradicts"
