@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
 from datetime import date
 
@@ -130,4 +131,6 @@ def calibration() -> None:
 
 
 if __name__ == "__main__":
+    sys.stdout.reconfigure(errors="replace")
+    sys.stderr.reconfigure(errors="replace")
     app()
