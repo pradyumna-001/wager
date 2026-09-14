@@ -98,7 +98,7 @@ failure-demo bet D1, then verifies the seeded PostHog lifts.
 scripts/dev/demo_reset.sh     # (or demo_reset.ps1 on Windows)
 ```
 
-Expected seeded grades: S1  supports (delta +2), S2 ❌ contradicts (delta −7),
+Expected seeded grades: S1  supports (delta +2), S2  contradicts (delta −7),
 S3  supports — boundary case (delta +4.9, just inside the ±5pp tolerance).
 Then run the demo per `docs/08_DEMO_SCRIPT.md`.
 
