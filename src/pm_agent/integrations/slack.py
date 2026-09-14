@@ -11,10 +11,20 @@ from pm_agent.integrations.base import FetchResult
 from pm_agent.models import DataFlag, Severity, Source
 
 _STALE_SECONDS = 300  # reject signatures more than 5 minutes away from now
+_BUTTON_TEXT_LIMIT = 75
 
 
 def _option_letter(index: int) -> str:
     return chr(ord("A") + index)
+
+
+def _button_text(proposed: bool, index: int, option: str) -> str:
+    check = "✅ " if proposed else ""
+    label = f"{check}Choose {_option_letter(index)} — {option}"
+    if len(label) <= _BUTTON_TEXT_LIMIT:
+        return label
+    prefix = f"{check}Choose {_option_letter(index)} — "
+    return prefix + option[: max(_BUTTON_TEXT_LIMIT - len(prefix) - 1, 0)] + "…"
 
 
 def post_confirm(
@@ -54,11 +64,7 @@ def post_confirm(
                         "action_id": f"confirm_option:{i}",
                         "text": {
                             "type": "plain_text",
-                            "text": (
-                                f"✅ Choose {_option_letter(i)} — {option}"
-                                if i == proposed_index
-                                else f"Choose {_option_letter(i)} — {option}"
-                            ),
+                            "text": _button_text(i == proposed_index, i, option),
                         },
                         "value": bet_id,
                         **({"style": "primary"} if i == proposed_index else {}),

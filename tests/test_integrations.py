@@ -387,6 +387,35 @@ def test_slack_post_confirm_block_kit(monkeypatch: pytest.MonkeyPatch) -> None:
     assert second["style"] == "primary"
 
 
+def test_slack_post_confirm_truncates_long_button_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Slack caps plain_text button text at 75 chars; LLM option text can exceed it.
+    long_option = (
+        "Unify onboarding into a single checklist flow with saved progress across "
+        "web and mobile devices for all new signups"
+    )
+    fake = _fake_slack(monkeypatch)
+
+    result = slack_mod.post_confirm(
+        get_settings(), "bet-2", [long_option, "Ship search only"], 0, "hypothesis"
+    )
+
+    assert result.error is None
+    actions = fake.calls[0]["blocks"][1]
+    texts = [e["text"]["text"] for e in actions["elements"]]
+    assert all(len(t) <= 75 for t in texts)
+    assert texts[0].startswith("✅ Choose A — ")
+    assert texts[0].endswith("…")
+    assert texts[1] == "Choose B — Ship search only"
+    # Routing fields untouched by truncation.
+    assert actions["block_id"] == "bet_confirm:bet-2"
+    assert [e["action_id"] for e in actions["elements"]] == [
+        "confirm_option:0",
+        "confirm_option:1",
+    ]
+
+
 def test_slack_post_confirm_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_slack(monkeypatch, error=SlackApiError("chat.postMessage failed", None))
 
