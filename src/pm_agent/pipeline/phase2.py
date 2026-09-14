@@ -41,11 +41,14 @@ def build_phase2_graph(checkpointer: Any = None):
     return graph.compile(checkpointer=checkpointer)
 
 
-def run_due_reviews() -> dict[str, int]:
-    """Find due bets, run Phase 2 per bet. Returns {checked, resolved, flagged}.
+def run_due_reviews() -> dict[str, Any]:
+    """Find due bets, run Phase 2 per bet. Returns {checked, resolved, flagged, results}.
 
-    Used by /reviews/check and the CLI. Phase 2 has no interrupts, so an
-    in-memory checkpointer per bet suffices (thread_id = bet_id:review, ADR 0003).
+    ``results`` carries one entry per bet for human-readable CLI/API output:
+    metric name, predicted/actual lift, delta, resolved status and the first
+    flag message. Used by /reviews/check and the CLI. Phase 2 has no
+    interrupts, so an in-memory checkpointer per bet suffices
+    (thread_id = bet_id:review, ADR 0003).
     """
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -53,18 +56,46 @@ def run_due_reviews() -> dict[str, int]:
     with get_conn() as conn:
         bets = store.due_bets(conn, demo_mode=settings.demo_mode)
     checked = resolved = flagged = 0
+    results: list[dict[str, Any]] = []
     for bet in bets:
         thread_id = f"{bet.id}:review"
         state = create_initial_state(str(bet.id), bet.doc_id, bet.meeting_date.isoformat())
         graph = build_phase2_graph(MemorySaver())
         try:
             final = graph.invoke(state, {"configurable": {"thread_id": thread_id}})
-        except Exception:
+        except Exception as exc:
             flagged += 1
+            results.append(
+                {
+                    "metric_name": bet.metric_name,
+                    "predicted_lift": bet.predicted_lift,
+                    "actual_lift": None,
+                    "delta": None,
+                    "resolved": False,
+                    "flag": str(exc),
+                }
+            )
             continue
         checked += 1
-        if final.get("delta") is not None:
+        did_resolve = final.get("delta") is not None
+        if did_resolve:
             resolved += 1
         if final.get("flags"):
             flagged += 1
-    return {"checked": checked, "resolved": resolved, "flagged": flagged}
+        flags = final.get("flags") or []
+        results.append(
+            {
+                "metric_name": final.get("metric_name", bet.metric_name),
+                "predicted_lift": final.get("predicted_lift", bet.predicted_lift),
+                "actual_lift": final.get("actual_lift"),
+                "delta": final.get("delta"),
+                "resolved": did_resolve,
+                "flag": flags[0].message if flags else None,
+            }
+        )
+    return {
+        "checked": checked,
+        "resolved": resolved,
+        "flagged": flagged,
+        "results": results,
+    }
