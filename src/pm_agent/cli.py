@@ -51,9 +51,11 @@ def run_phase1(doc_id: str = typer.Option(None, "--doc-id")) -> None:
     if "__interrupt__" in result:
         value = result["__interrupt__"][0].value
         typer.echo(f"bet {bet_id} PENDING_CONFIRMATION")
+        typer.echo("")
         for i, option in enumerate(value["options"]):
             marker = "*" if i == value["proposed_index"] else " "
             typer.echo(f"  {marker} ({i}) {option}")
+        typer.echo("")
         typer.echo(f"confirm with: python -m pm_agent.cli confirm {bet_id} --option <i>")
 
 
@@ -79,6 +81,18 @@ def confirm(bet_id: str, option: int = typer.Option(..., "--option")) -> None:
 def check_due_reviews() -> None:
     """Run Phase 2 for all due bets."""
     summary = run_due_reviews()
+    tolerance = get_settings().bet_tolerance_pp
+    for r in summary.get("results", []):
+        if not r["resolved"]:
+            flag = r.get("flag") or "no metric fetched"
+            typer.echo(f"⚑ {r['metric_name']}: flagged — {flag}")
+            continue
+        verdict = "✅ supports" if abs(r["delta"]) <= tolerance else "❌ contradicts"
+        typer.echo(
+            f"{verdict} {r['metric_name']}: predicted {r['predicted_lift']:+}pp,"
+            f" actual {r['actual_lift']:+}pp → delta {r['delta']:+}pp"
+        )
+    typer.echo("")
     typer.echo(
         f"checked: {summary['checked']}, resolved: {summary['resolved']},"
         f" flagged: {summary['flagged']}"
@@ -106,6 +120,7 @@ def show_bet(bet_id: str) -> None:
         group = [n for n in nodes if str(n.type) == node_type]
         if not group:
             continue
+        typer.echo("")
         typer.echo(f"{node_type}:")
         for node in group:
             typer.echo(f'  - "{node.content}" [{node.source}]')

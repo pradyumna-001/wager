@@ -24,6 +24,48 @@ def test_check_due_reviews(monkeypatch):
     assert "checked: 1, resolved: 1, flagged: 0" in result.output
 
 
+def test_check_due_reviews_prints_per_bet_results(monkeypatch):
+    from typer.testing import CliRunner
+
+    import pm_agent.cli as cli
+
+    monkeypatch.setattr(
+        cli,
+        "run_due_reviews",
+        lambda: {
+            "checked": 2,
+            "resolved": 1,
+            "flagged": 1,
+            "results": [
+                {
+                    "metric_name": "checkout_conversion",
+                    "predicted_lift": 10.0,
+                    "actual_lift": 12.0,
+                    "delta": 2.0,
+                    "resolved": True,
+                    "flag": None,
+                },
+                {
+                    "metric_name": "signup_completion_rate",
+                    "predicted_lift": 15.0,
+                    "actual_lift": None,
+                    "delta": None,
+                    "resolved": False,
+                    "flag": "posthog_error: 400",
+                },
+            ],
+        },
+    )
+
+    result = CliRunner().invoke(typer_app, ["check-due-reviews"])
+
+    assert result.exit_code == 0
+    assert "supports checkout_conversion" in result.output
+    assert "delta +2.0pp" in result.output
+    assert "flagged — posthog_error: 400" in result.output
+    assert "checked: 2, resolved: 1, flagged: 1" in result.output
+
+
 def test_calibration(monkeypatch):
     from typer.testing import CliRunner
 
